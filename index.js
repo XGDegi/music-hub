@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const archiver = require('archiver');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 
 const app = express();
 const PORT = 3000;
@@ -17,10 +17,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// ---- Download Queue with per-song tracking ----
+// Queue + status tracking
 const downloadQueue = [];
 let isDownloading = false;
-const downloadStatus = {};
+const downloadStatus = {}; // { jobId: [ {filename, done} ] }
 
 function processQueue() {
   if (isDownloading || downloadQueue.length === 0) return;
@@ -28,13 +28,13 @@ function processQueue() {
 
   const job = downloadQueue.shift();
   const jobId = job.id;
-  downloadStatus[jobId] = job.urls.map(u => ({ filename: u.filename, done: false }));
+  downloadStatus[jobId] = []; // will populate as songs start downloading
 
   let currentIndex = 0;
 
-  function nextDownload() {
+  function downloadNextUrl() {
     if (currentIndex >= job.urls.length) {
-      // ZIP creation
+      // ZIP everything in SONGS_DIR
       const zipName = `${jobId}.zip`;
       const zipPath = path.join(ZIP_DIR, zipName);
 
@@ -45,9 +45,8 @@ function processQueue() {
         // Auto delete songs + zip after 1 hour
         setTimeout(() => {
           if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-          job.urls.forEach(u => {
-            const songPath = path.join(SONGS_DIR, u.filename);
-            if (fs.existsSync(songPath)) fs.unlinkSync(songPath);
+          fs.readdirSync(SONGS_DIR).forEach(f => {
+            fs.unlinkSync(path.join(SONGS_DIR, f));
           });
         }, 1000 * 60 * 60);
 
@@ -57,55 +56,66 @@ function processQueue() {
       });
 
       archive.pipe(output);
-      job.urls.forEach(f => {
-        archive.file(path.join(SONGS_DIR, f.filename), { name: f.filename });
+      fs.readdirSync(SONGS_DIR).forEach(f => {
+        archive.file(path.join(SONGS_DIR, f), { name: f });
       });
       archive.finalize();
       return;
     }
 
-    const item = job.urls[currentIndex];
-    const cmd = `./venv/bin/spotdl "${item.url}" --output "${path.join(SONGS_DIR, item.filename)}"`;
+    const url = job.urls[currentIndex];
+    const cmd = './venv/bin/spotdl';
+    const args = [url, '--output', SONGS_DIR];
+    const child = spawn(cmd, args);
 
-    const downloadProcess = exec(cmd);
+    // Listen to stdout to detect when a song starts and ends
+    child.stdout.on('data', data => {
+      const str = data.toString();
+      // SpotDL outputs lines like: "Downloading: <song name>"
+      const match = str.match(/Downloading: (.+)/);
+      if (match) {
+        const songName = match[1].trim();
+        // Add to status array if not exists
+        if (!downloadStatus[jobId].some(s => s.filename === songName)) {
+          downloadStatus[jobId].push({ filename: songName, done: false });
+        }
+      }
+    });
 
-    downloadProcess.on('close', () => {
-      downloadStatus[jobId][currentIndex].done = true;
+    child.stderr.on('data', data => {
+      console.error(data.toString());
+    });
+
+    child.on('close', () => {
+      // Mark all songs that were downloaded from this URL as done
+      downloadStatus[jobId].forEach(s => s.done = true);
       currentIndex++;
-      nextDownload();
+      downloadNextUrl();
     });
   }
 
-  nextDownload();
+  downloadNextUrl();
 }
 
 app.post('/api/download', (req, res) => {
   const { urls } = req.body;
-  if (!urls || urls.length === 0) {
-    return res.status(400).json({ error: 'No URLs provided' });
-  }
+  if (!urls || urls.length === 0) return res.status(400).json({ error: 'No URLs provided' });
 
   const jobId = `job-${Date.now()}`;
-  const items = urls.map((u, i) => {
-    return { url: u, filename: `song-${jobId}-${i}.mp3` };
-  });
-
   const promise = new Promise(resolve => {
-    downloadQueue.push({ id: jobId, urls: items, resolve });
+    downloadQueue.push({ id: jobId, urls, resolve });
     processQueue();
   });
 
   res.json({ status: 'queued', jobId });
 
-  promise.then(result => {
-    console.log(`Job complete: ${jobId}`);
-  });
+  promise.then(result => console.log(`Job complete: ${jobId}`));
 });
 
 app.get('/api/status/:jobId', (req, res) => {
   const status = downloadStatus[req.params.jobId];
   if (!status) return res.status(404).json({ error: 'Not found' });
-  res.json(status); // Array of song statuses
+  res.json(status); // Array of { filename, done }
 });
 
 app.use('/zips', express.static(ZIP_DIR));
