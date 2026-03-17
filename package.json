@@ -1,7 +1,7 @@
 {
   "name": "music-hub",
   "version": "1.0.0",
-  "description": "Local music downloader + ZIP server with queue and cleanup",
+  "description": "Local music downloader + ZIP server with queue and per-song progress dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
