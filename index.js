@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
+const fetch = require('node-fetch'); // optional for Spotify API if you extend
 const app = express();
 const PORT = 3000;
 
@@ -16,8 +17,20 @@ let downloadQueue = [];
 let zipQueue = [];
 let currentDownload = null;
 
+// Function to convert Spotify URL to a YouTube search query
+async function spotifyToYouTubeSearch(url) {
+  // Simple fallback: use ytsearch with Spotify URL
+  // For better accuracy, use Spotify API to get track/playlist info
+  return 'ytsearch1:' + url;
+}
+
 // Download function using yt-dlp
-function downloadSong(url, outputPath) {
+async function downloadSong(url, outputPath) {
+  // Convert Spotify URLs to YouTube search automatically
+  if (url.includes('spotify.com')) {
+    url = await spotifyToYouTubeSearch(url);
+  }
+
   return new Promise((resolve, reject) => {
     const ytdlp = spawn('yt-dlp', [
       url,
@@ -26,10 +39,9 @@ function downloadSong(url, outputPath) {
     ]);
 
     ytdlp.stdout.on('data', (data) => {
-      console.log(`yt-dlp: ${data}`);
-      if (currentDownload) {
-        currentDownload.progress = data.toString();
-      }
+      const str = data.toString();
+      console.log(`yt-dlp: ${str}`);
+      if (currentDownload) currentDownload.progress = str;
     });
 
     ytdlp.stderr.on('data', (data) => {
@@ -73,7 +85,7 @@ async function processQueue() {
     currentDownload.status = 'Error';
   } finally {
     currentDownload = null;
-    setImmediate(processQueue); // Process next in queue
+    setImmediate(processQueue);
   }
 }
 
