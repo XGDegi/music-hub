@@ -1,123 +1,138 @@
+// index.js
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const archiver = require('archiver');
 const { spawn } = require('child_process');
-
+const path = require('path');
+const fs = require('fs');
+const archiver = require('archiver');
 const app = express();
 const PORT = 3000;
 
-const SONGS_DIR = path.join(__dirname, 'downloads');
-const ZIP_DIR = path.join(__dirname, 'zips');
-
-if (!fs.existsSync(SONGS_DIR)) fs.mkdirSync(SONGS_DIR);
-if (!fs.existsSync(ZIP_DIR)) fs.mkdirSync(ZIP_DIR);
-
+// Middleware
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Queue + status tracking
-const downloadQueue = [];
-let isDownloading = false;
-const downloadStatus = {}; // { jobId: [ {filename, done} ] }
+// In-memory queues
+let downloadQueue = [];
+let zipQueue = [];
+let currentDownload = null;
 
-function processQueue() {
-  if (isDownloading || downloadQueue.length === 0) return;
-  isDownloading = true;
+// Download function using yt-dlp
+function downloadSong(url, outputPath) {
+  return new Promise((resolve, reject) => {
+    const ytdlp = spawn('yt-dlp', [
+      url,
+      '-o',
+      `${outputPath}/%(title)s.%(ext)s`
+    ]);
 
-  const job = downloadQueue.shift();
-  const jobId = job.id;
-  downloadStatus[jobId] = []; // will populate as songs start downloading
-
-  let currentIndex = 0;
-
-  function downloadNextUrl() {
-    if (currentIndex >= job.urls.length) {
-      // ZIP everything in SONGS_DIR
-      const zipName = `${jobId}.zip`;
-      const zipPath = path.join(ZIP_DIR, zipName);
-
-      const output = fs.createWriteStream(zipPath);
-      const archive = archiver('zip', { zlib: { level: 9 } });
-
-      output.on('close', () => {
-        // Auto delete songs + zip after 1 hour
-        setTimeout(() => {
-          if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-          fs.readdirSync(SONGS_DIR).forEach(f => {
-            fs.unlinkSync(path.join(SONGS_DIR, f));
-          });
-        }, 1000 * 60 * 60);
-
-        job.resolve({ zipName });
-        isDownloading = false;
-        processQueue();
-      });
-
-      archive.pipe(output);
-      fs.readdirSync(SONGS_DIR).forEach(f => {
-        archive.file(path.join(SONGS_DIR, f), { name: f });
-      });
-      archive.finalize();
-      return;
-    }
-
-    const url = job.urls[currentIndex];
-    const cmd = './venv/bin/spotdl';
-    const args = [url, '--output', SONGS_DIR];
-    const child = spawn(cmd, args);
-
-    // Listen to stdout to detect when a song starts and ends
-    child.stdout.on('data', data => {
-      const str = data.toString();
-      // SpotDL outputs lines like: "Downloading: <song name>"
-      const match = str.match(/Downloading: (.+)/);
-      if (match) {
-        const songName = match[1].trim();
-        // Add to status array if not exists
-        if (!downloadStatus[jobId].some(s => s.filename === songName)) {
-          downloadStatus[jobId].push({ filename: songName, done: false });
-        }
+    ytdlp.stdout.on('data', (data) => {
+      console.log(`yt-dlp: ${data}`);
+      if (currentDownload) {
+        currentDownload.progress = data.toString();
       }
     });
 
-    child.stderr.on('data', data => {
-      console.error(data.toString());
+    ytdlp.stderr.on('data', (data) => {
+      console.error(`yt-dlp error: ${data}`);
     });
 
-    child.on('close', () => {
-      // Mark all songs that were downloaded from this URL as done
-      downloadStatus[jobId].forEach(s => s.done = true);
-      currentIndex++;
-      downloadNextUrl();
+    ytdlp.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`yt-dlp exited with code ${code}`));
     });
-  }
-
-  downloadNextUrl();
+  });
 }
 
-app.post('/api/download', (req, res) => {
-  const { urls } = req.body;
-  if (!urls || urls.length === 0) return res.status(400).json({ error: 'No URLs provided' });
+// Process download queue
+async function processQueue() {
+  if (currentDownload || downloadQueue.length === 0) return;
+  currentDownload = downloadQueue.shift();
+  currentDownload.status = 'Downloading';
 
-  const jobId = `job-${Date.now()}`;
-  const promise = new Promise(resolve => {
-    downloadQueue.push({ id: jobId, urls, resolve });
-    processQueue();
+  const outputPath = path.join(__dirname, 'downloads', currentDownload.id);
+  fs.mkdirSync(outputPath, { recursive: true });
+
+  try {
+    await downloadSong(currentDownload.url, outputPath);
+    currentDownload.status = 'Zipping';
+
+    // Zip the download
+    const zipPath = path.join(__dirname, 'zips', `${currentDownload.id}.zip`);
+    fs.mkdirSync(path.dirname(zipPath), { recursive: true });
+
+    await zipFolder(outputPath, zipPath);
+
+    currentDownload.status = 'Done';
+    currentDownload.zip = `/zips/${currentDownload.id}.zip`;
+
+    // Add to zip queue for auto-delete
+    zipQueue.push({ zipPath, downloadPath: outputPath, timestamp: Date.now() });
+
+  } catch (err) {
+    console.error(err);
+    currentDownload.status = 'Error';
+  } finally {
+    currentDownload = null;
+    setImmediate(processQueue); // Process next in queue
+  }
+}
+
+// Zip folder
+function zipFolder(source, out) {
+  return new Promise((resolve, reject) => {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const stream = fs.createWriteStream(out);
+
+    archive
+      .directory(source, false)
+      .on('error', err => reject(err))
+      .pipe(stream);
+
+    stream.on('close', () => resolve());
+    archive.finalize();
   });
+}
 
-  res.json({ status: 'queued', jobId });
+// Auto-delete zips and downloads after 1 hour
+setInterval(() => {
+  const now = Date.now();
+  zipQueue = zipQueue.filter(item => {
+    if (now - item.timestamp > 3600000) {
+      if (fs.existsSync(item.zipPath)) fs.unlinkSync(item.zipPath);
+      if (fs.existsSync(item.downloadPath)) fs.rmSync(item.downloadPath, { recursive: true, force: true });
+      return false;
+    }
+    return true;
+  });
+}, 60000); // check every 60s
 
-  promise.then(result => console.log(`Job complete: ${jobId}`));
+// API to add download
+app.post('/download', (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).send({ error: 'No URL provided' });
+
+  const id = Date.now().toString();
+  const download = { id, url, status: 'Queued', progress: 0, zip: null };
+  downloadQueue.push(download);
+
+  processQueue();
+  res.send({ id });
 });
 
-app.get('/api/status/:jobId', (req, res) => {
-  const status = downloadStatus[req.params.jobId];
-  if (!status) return res.status(404).json({ error: 'Not found' });
-  res.json(status); // Array of { filename, done }
+// API for dashboard status
+app.get('/status', (req, res) => {
+  res.send({
+    current: currentDownload,
+    queue: downloadQueue,
+    zips: zipQueue.map(item => ({
+      zip: path.basename(item.zipPath),
+      timestamp: item.timestamp
+    }))
+  });
 });
 
-app.use('/zips', express.static(ZIP_DIR));
+// Serve zips
+app.use('/zips', express.static(path.join(__dirname, 'zips')));
 
+// Start server
 app.listen(PORT, () => console.log(`Music Hub running: http://localhost:${PORT}`));
