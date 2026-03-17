@@ -17,7 +17,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// ---- Download Queue ----
+// ---- Download Queue with per-song tracking ----
 const downloadQueue = [];
 let isDownloading = false;
 const downloadStatus = {};
@@ -28,12 +28,12 @@ function processQueue() {
 
   const job = downloadQueue.shift();
   const jobId = job.id;
-  downloadStatus[jobId] = { progress: 0, total: job.urls.length };
+  downloadStatus[jobId] = job.urls.map(u => ({ filename: u.filename, done: false }));
 
-  let doneCount = 0;
+  let currentIndex = 0;
 
   function nextDownload() {
-    if (doneCount >= job.urls.length) {
+    if (currentIndex >= job.urls.length) {
       // ZIP creation
       const zipName = `${jobId}.zip`;
       const zipPath = path.join(ZIP_DIR, zipName);
@@ -64,23 +64,18 @@ function processQueue() {
       return;
     }
 
-    const item = job.urls[doneCount];
+    const item = job.urls[currentIndex];
     const cmd = `./venv/bin/spotdl "${item.url}" --output "${path.join(SONGS_DIR, item.filename)}"`;
 
     const downloadProcess = exec(cmd);
 
-    downloadProcess.stdout.on('data', data => {
-      if (data.toLowerCase().includes('[download]')) {
-        downloadStatus[jobId].progress = doneCount + 0.5;
-      }
-    });
-
     downloadProcess.on('close', () => {
-      doneCount++;
-      downloadStatus[jobId].progress = doneCount;
+      downloadStatus[jobId][currentIndex].done = true;
+      currentIndex++;
       nextDownload();
     });
   }
+
   nextDownload();
 }
 
@@ -108,9 +103,9 @@ app.post('/api/download', (req, res) => {
 });
 
 app.get('/api/status/:jobId', (req, res) => {
-  const s = downloadStatus[req.params.jobId];
-  if (!s) return res.status(404).json({ error: 'Not found' });
-  res.json(s);
+  const status = downloadStatus[req.params.jobId];
+  if (!status) return res.status(404).json({ error: 'Not found' });
+  res.json(status); // Array of song statuses
 });
 
 app.use('/zips', express.static(ZIP_DIR));
