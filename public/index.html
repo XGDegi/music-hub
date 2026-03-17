@@ -1,44 +1,125 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Music Hub Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f6fa; color: #333; padding: 20px; }
-
-    h1 { text-align: center; margin-bottom: 20px; color: #2f3640; }
-    h2 { margin-top: 30px; margin-bottom: 10px; color: #2f3640; }
-
-    form { display: flex; flex-direction: column; align-items: center; margin-bottom: 30px; }
-    textarea { width: 90%; max-width: 600px; padding: 12px; border-radius: 6px; border: 1px solid #dcdde1; font-size: 16px; resize: vertical; }
-    button { margin-top: 10px; padding: 12px 20px; background: #487eb0; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
-    button:hover { background: #40739e; }
-
-    #queue { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 12px; }
-    .job-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 3px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 12px; }
-    .job-header { font-weight: bold; color: #273c75; }
-
-    .progress-container { width: 100%; background: #dcdde1; border-radius: 6px; overflow: hidden; height: 20px; }
-    .progress-bar { width: 0%; height: 100%; background: #44bd32; text-align: center; color: white; font-size: 12px; line-height: 20px; transition: width 0.3s; }
-
-    .download-link { text-decoration: none; color: white; background: #44bd32; padding: 6px 12px; border-radius: 6px; font-size: 14px; width: fit-content; display: inline-block; margin-top: 6px; }
-    .download-link:hover { background: #4cd137; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Hub Dashboard</title>
+<style>
+  body {
+    font-family: "Segoe UI", sans-serif;
+    background: #1e1e2f;
+    color: #eee;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { text-align: center; color: #4dd0e1; }
+  .container { max-width: 900px; margin: auto; }
+  .download, .queue, .zips { margin-bottom: 30px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px; text-align: left; border-bottom: 1px solid #444; }
+  th { background: #2a2a3f; }
+  tr:hover { background: #333; }
+  .progress-bar { background: #4dd0e1; height: 10px; border-radius: 5px; }
+  .progress-container { background: #333; border-radius: 5px; overflow: hidden; }
+  button { padding: 5px 10px; background: #4dd0e1; border: none; border-radius: 5px; color: #000; cursor: pointer; }
+  input[type="text"] { width: 70%; padding: 5px; border-radius: 5px; border: 1px solid #444; }
+</style>
 </head>
 <body>
+  <h1>Music Hub Dashboard</h1>
+  <div class="container">
+    <div class="download">
+      <h2>Add Download</h2>
+      <input type="text" id="urlInput" placeholder="Enter Spotify/YouTube URL">
+      <button onclick="addDownload()">Add</button>
+    </div>
 
-<h1>🎵 Music Hub Dashboard</h1>
+    <div class="queue">
+      <h2>Current & Queue</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>URL</th><th>Status</th><th>Progress</th></tr>
+        </thead>
+        <tbody id="queueBody"></tbody>
+      </table>
+    </div>
 
-<form id="downloadForm">
-  <textarea id="urls" placeholder="Enter Spotify links (one per line)" rows="5"></textarea>
-  <button type="submit">Start Download</button>
-</form>
+    <div class="zips">
+      <h2>Completed Zips</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ZIP</th><th>Download</th></tr>
+        </thead>
+        <tbody id="zipsBody"></tbody>
+      </table>
+    </div>
+  </div>
 
-<h2>Queue & Progress</h2>
-<ul id="queue"></ul>
+<script>
+async function fetchStatus() {
+  const res = await fetch('/status');
+  const data = await res.json();
 
-<script src="dashboard.js"></script>
+  const queueBody = document.getElementById('queueBody');
+  queueBody.innerHTML = '';
+
+  if (data.current) {
+    queueBody.innerHTML += `<tr>
+      <td>${data.current.id}</td>
+      <td>${data.current.url}</td>
+      <td>${data.current.status}</td>
+      <td>
+        <div class="progress-container">
+          <div class="progress-bar" style="width:${calculateProgress(data.current.progress)}%"></div>
+        </div>
+      </td>
+    </tr>`;
+  }
+
+  data.queue.forEach(item => {
+    queueBody.innerHTML += `<tr>
+      <td>${item.id}</td>
+      <td>${item.url}</td>
+      <td>${item.status}</td>
+      <td>
+        <div class="progress-container">
+          <div class="progress-bar" style="width:${calculateProgress(item.progress)}%"></div>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  const zipsBody = document.getElementById('zipsBody');
+  zipsBody.innerHTML = '';
+  data.zips.forEach(item => {
+    zipsBody.innerHTML += `<tr>
+      <td>${item.zip.split('.')[0]}</td>
+      <td>${item.zip}</td>
+      <td><a href="/zips/${item.zip}" target="_blank"><button>Download</button></a></td>
+    </tr>`;
+  });
+}
+
+function calculateProgress(progressText) {
+  // yt-dlp outputs lines like "[download] 50.3% of …"
+  const match = progressText.match(/(\d+(\.\d+)?)%/);
+  if (match) return parseFloat(match[1]);
+  return 0;
+}
+
+async function addDownload() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return alert('Enter a URL!');
+  await fetch('/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url })
+  });
+  document.getElementById('urlInput').value = '';
+}
+
+setInterval(fetchStatus, 2000); // refresh every 2 seconds
+fetchStatus();
+</script>
 </body>
 </html>
