@@ -1,27 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <title>Music Hub Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
-    h1 { color: #333; }
-    textarea { width: 100%; margin-bottom: 10px; }
-    button { padding: 8px 12px; }
-    ul { list-style: none; padding-left: 0; }
-    li { margin-bottom: 6px; background: #fff; padding: 6px 10px; border-radius: 4px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f6fa; color: #333; padding: 20px; }
+
+    h1 { text-align: center; margin-bottom: 20px; color: #2f3640; }
+    h2 { margin-top: 30px; margin-bottom: 10px; color: #2f3640; }
+
+    form { display: flex; flex-direction: column; align-items: center; margin-bottom: 30px; }
+    textarea { width: 90%; max-width: 600px; padding: 12px; border-radius: 6px; border: 1px solid #dcdde1; font-size: 16px; resize: vertical; }
+    button { margin-top: 10px; padding: 12px 20px; background: #487eb0; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #40739e; }
+
+    #queue { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 12px; }
+    .job-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 3px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 12px; }
+    .job-header { font-weight: bold; color: #273c75; }
+
+    .progress-container { width: 100%; background: #dcdde1; border-radius: 6px; overflow: hidden; height: 20px; }
+    .progress-bar { width: 0%; height: 100%; background: #44bd32; text-align: center; color: white; font-size: 12px; line-height: 20px; transition: width 0.3s; }
+
+    .download-link { text-decoration: none; color: white; background: #44bd32; padding: 6px 12px; border-radius: 6px; font-size: 14px; width: fit-content; display: inline-block; margin-top: 6px; }
+    .download-link:hover { background: #4cd137; }
   </style>
 </head>
 <body>
-  <h1>Music Download Dashboard</h1>
 
-  <form id="downloadForm">
-    <textarea id="urls" placeholder="Enter Spotify links (one per line)" rows="5"></textarea><br>
-    <button type="submit">Download</button>
-  </form>
+<h1>🎵 Music Hub Dashboard</h1>
 
-  <h2>Queue Status</h2>
-  <ul id="queue"></ul>
+<form id="downloadForm">
+  <textarea id="urls" placeholder="Enter Spotify links (one per line)" rows="5"></textarea>
+  <button type="submit">Start Download</button>
+</form>
 
-  <script src="dashboard.js"></script>
+<h2>Queue & Progress</h2>
+<ul id="queue"></ul>
+
+<script src="dashboard.js"></script>
 </body>
 </html>
