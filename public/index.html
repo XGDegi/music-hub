@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Music Hub Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
+    h1 { color: #333; }
+    textarea { width: 100%; margin-bottom: 10px; }
+    button { padding: 8px 12px; }
+    ul { list-style: none; padding-left: 0; }
+    li { margin-bottom: 6px; background: #fff; padding: 6px 10px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Music Download Dashboard</h1>
+
+  <form id="downloadForm">
+    <textarea id="urls" placeholder="Enter Spotify links (one per line)" rows="5"></textarea><br>
+    <button type="submit">Download</button>
+  </form>
+
+  <h2>Queue Status</h2>
+  <ul id="queue"></ul>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
