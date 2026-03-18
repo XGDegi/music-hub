@@ -5,121 +5,81 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Music Hub Dashboard</title>
 <style>
-  body {
-    font-family: "Segoe UI", sans-serif;
-    background: #1e1e2f;
-    color: #eee;
-    margin: 0;
-    padding: 20px;
-  }
-  h1 { text-align: center; color: #4dd0e1; }
-  .container { max-width: 900px; margin: auto; }
-  .download, .queue, .zips { margin-bottom: 30px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 10px; text-align: left; border-bottom: 1px solid #444; }
-  th { background: #2a2a3f; }
-  tr:hover { background: #333; }
-  .progress-bar { background: #4dd0e1; height: 10px; border-radius: 5px; }
-  .progress-container { background: #333; border-radius: 5px; overflow: hidden; }
-  button { padding: 5px 10px; background: #4dd0e1; border: none; border-radius: 5px; color: #000; cursor: pointer; }
-  input[type="text"] { width: 70%; padding: 5px; border-radius: 5px; border: 1px solid #444; }
+  body { font-family: Arial, sans-serif; background: #1e1e1e; color: #fff; text-align: center; padding: 20px; }
+  h1 { color: #ff4081; }
+  #progress-bar { width: 80%; background: #333; border-radius: 10px; margin: 20px auto; height: 25px; overflow: hidden; }
+  #progress-fill { height: 100%; width: 0%; background: #ff4081; text-align: center; line-height: 25px; color: #fff; transition: width 0.5s; }
+  .download-item { margin: 10px 0; }
 </style>
 </head>
 <body>
-  <h1>Music Hub Dashboard</h1>
-  <div class="container">
-    <div class="download">
-      <h2>Add Download</h2>
-      <input type="text" id="urlInput" placeholder="Enter Spotify/YouTube URL">
-      <button onclick="addDownload()">Add</button>
-    </div>
 
-    <div class="queue">
-      <h2>Current & Queue</h2>
-      <table>
-        <thead>
-          <tr><th>ID</th><th>URL</th><th>Status</th><th>Progress</th></tr>
-        </thead>
-        <tbody id="queueBody"></tbody>
-      </table>
-    </div>
+<h1>Music Hub Dashboard</h1>
 
-    <div class="zips">
-      <h2>Completed Zips</h2>
-      <table>
-        <thead>
-          <tr><th>ID</th><th>ZIP</th><th>Download</th></tr>
-        </thead>
-        <tbody id="zipsBody"></tbody>
-      </table>
-    </div>
-  </div>
+<div id="current-download">
+  <h2>Current Download</h2>
+  <div id="progress-text">No downloads yet</div>
+  <div id="progress-bar"><div id="progress-fill">0%</div></div>
+</div>
+
+<div id="queue">
+  <h2>Queue</h2>
+  <ul id="queue-list"></ul>
+</div>
+
+<div id="zips">
+  <h2>Available ZIPs</h2>
+  <ul id="zip-list"></ul>
+</div>
 
 <script>
-async function fetchStatus() {
-  const res = await fetch('/status');
-  const data = await res.json();
+async function updateStatus() {
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
 
-  const queueBody = document.getElementById('queueBody');
-  queueBody.innerHTML = '';
+    // Update current download progress
+    if(data.current) {
+      document.getElementById('progress-text').innerText = `Downloading: ${data.current.progress}`;
+      
+      // Calculate percentage for progress bar
+      const [done, total] = data.current.progress.split(' / ').map(Number);
+      const percent = total ? Math.floor((done / total) * 100) : 0;
+      document.getElementById('progress-fill').style.width = percent + '%';
+      document.getElementById('progress-fill').innerText = percent + '%';
+    } else {
+      document.getElementById('progress-text').innerText = 'No downloads yet';
+      document.getElementById('progress-fill').style.width = '0%';
+      document.getElementById('progress-fill').innerText = '0%';
+    }
 
-  if (data.current) {
-    queueBody.innerHTML += `<tr>
-      <td>${data.current.id}</td>
-      <td>${data.current.url}</td>
-      <td>${data.current.status}</td>
-      <td>
-        <div class="progress-container">
-          <div class="progress-bar" style="width:${calculateProgress(data.current.progress)}%"></div>
-        </div>
-      </td>
-    </tr>`;
+    // Update queue
+    const queueList = document.getElementById('queue-list');
+    queueList.innerHTML = '';
+    data.queue.forEach(item => {
+      const li = document.createElement('li');
+      li.innerText = `${item.status} - ${item.progress || ''}`;
+      queueList.appendChild(li);
+    });
+
+    // Update ZIP list
+    const zipList = document.getElementById('zip-list');
+    zipList.innerHTML = '';
+    data.zips.forEach(item => {
+      const li = document.createElement('li');
+      li.innerHTML = `<a href="/zips/${item.zip}" target="_blank">${item.zip}</a>`;
+      zipList.appendChild(li);
+    });
+
+  } catch(err) {
+    console.error(err);
   }
 
-  data.queue.forEach(item => {
-    queueBody.innerHTML += `<tr>
-      <td>${item.id}</td>
-      <td>${item.url}</td>
-      <td>${item.status}</td>
-      <td>
-        <div class="progress-container">
-          <div class="progress-bar" style="width:${calculateProgress(item.progress)}%"></div>
-        </div>
-      </td>
-    </tr>`;
-  });
-
-  const zipsBody = document.getElementById('zipsBody');
-  zipsBody.innerHTML = '';
-  data.zips.forEach(item => {
-    zipsBody.innerHTML += `<tr>
-      <td>${item.zip.split('.')[0]}</td>
-      <td>${item.zip}</td>
-      <td><a href="/zips/${item.zip}" target="_blank"><button>Download</button></a></td>
-    </tr>`;
-  });
+  setTimeout(updateStatus, 1000); // update every 1 second
 }
 
-function calculateProgress(progressText) {
-  // yt-dlp outputs lines like "[download] 50.3% of …"
-  const match = progressText.match(/(\d+(\.\d+)?)%/);
-  if (match) return parseFloat(match[1]);
-  return 0;
-}
-
-async function addDownload() {
-  const url = document.getElementById('urlInput').value.trim();
-  if (!url) return alert('Enter a URL!');
-  await fetch('/download', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url })
-  });
-  document.getElementById('urlInput').value = '';
-}
-
-setInterval(fetchStatus, 2000); // refresh every 2 seconds
-fetchStatus();
+updateStatus();
 </script>
+
 </body>
 </html>
