@@ -66,9 +66,14 @@ async function downloadSong(url, outputPath) {
     tracks = [url]; // normal YouTube links still work
   }
 
-  for (let i = 0; i < tracks.length; i++) {
+  const totalTracks = tracks.length;
+
+  for (let i = 0; i < totalTracks; i++) {
     const trackUrl = tracks[i];
     fs.mkdirSync(outputPath, { recursive: true });
+
+    // Update current download progress
+    currentDownload.progress = `${i + 1} / ${totalTracks}`;
 
     await new Promise((resolve, reject) => {
       const args = [
@@ -79,9 +84,7 @@ async function downloadSong(url, outputPath) {
         '-o', `${outputPath}/%(title)s.%(ext)s`
       ];
 
-      const ytdlp = spawn('yt-dlp', args);
-
-      currentDownload.progress = `Track ${i + 1} of ${tracks.length}`;
+      const ytdlp = spawn('/usr/local/bin/yt-dlp', args); // full path ensures no ENOENT
 
       ytdlp.stdout.on('data', d => console.log(d.toString()));
       ytdlp.stderr.on('data', d => console.error(d.toString()));
@@ -162,7 +165,7 @@ app.post('/download', (req, res) => {
 // Status endpoint
 app.get('/status', (req, res) => {
   res.send({
-    current: currentDownload,
+    current: currentDownload,   // includes progress like "3 / 100"
     queue: downloadQueue,
     zips: zipQueue.map(item => ({
       zip: path.basename(item.zipPath),
