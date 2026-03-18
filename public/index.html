@@ -10,29 +10,56 @@
   #progress-bar { width: 80%; background: #333; border-radius: 10px; margin: 20px auto; height: 25px; overflow: hidden; }
   #progress-fill { height: 100%; width: 0%; background: #ff4081; text-align: center; line-height: 25px; color: #fff; transition: width 0.5s; }
   .download-item { margin: 10px 0; }
+  input, button { padding: 10px; font-size: 16px; margin: 5px; }
 </style>
 </head>
 <body>
 
 <h1>Music Hub Dashboard</h1>
 
+<!-- URL Form -->
+<div id="download-form">
+  <input type="text" id="url-input" placeholder="Paste Spotify or YouTube link here" size="50">
+  <button onclick="submitURL()">Download</button>
+</div>
+
+<!-- Current Download -->
 <div id="current-download">
   <h2>Current Download</h2>
   <div id="progress-text">No downloads yet</div>
   <div id="progress-bar"><div id="progress-fill">0%</div></div>
 </div>
 
+<!-- Queue -->
 <div id="queue">
   <h2>Queue</h2>
   <ul id="queue-list"></ul>
 </div>
 
+<!-- ZIP List -->
 <div id="zips">
   <h2>Available ZIPs</h2>
   <ul id="zip-list"></ul>
 </div>
 
 <script>
+// Submit URL to server
+async function submitURL() {
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) return alert('Please enter a URL.');
+
+  const res = await fetch('/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url })
+  });
+
+  const data = await res.json();
+  document.getElementById('url-input').value = '';
+  alert(`Download queued with ID: ${data.id}`);
+}
+
+// Update dashboard
 async function updateStatus() {
   try {
     const res = await fetch('/status');
@@ -41,8 +68,6 @@ async function updateStatus() {
     // Update current download progress
     if(data.current) {
       document.getElementById('progress-text').innerText = `Downloading: ${data.current.progress}`;
-      
-      // Calculate percentage for progress bar
       const [done, total] = data.current.progress.split(' / ').map(Number);
       const percent = total ? Math.floor((done / total) * 100) : 0;
       document.getElementById('progress-fill').style.width = percent + '%';
