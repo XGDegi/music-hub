@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
+const SpotifyWebApi = require('spotify-web-api-node');
 const app = express();
 const PORT = 3000;
 
@@ -14,59 +15,72 @@ let downloadQueue = [];
 let zipQueue = [];
 let currentDownload = null;
 
-// Convert Spotify URL to YouTube search URL
-function spotifyToYouTubeSearch(url) {
-  // Extract track/playlist name from URL (simplified)
-  const parts = url.split('/');
-  const id = parts[parts.length - 1].split('?')[0];
-  return `ytsearch1:${id}`; // searches YouTube for top match
+// Spotify API setup
+const spotifyApi = new SpotifyWebApi({
+  clientId: process.env.SPOTIPY_CLIENT_ID,
+  clientSecret: process.env.SPOTIPY_CLIENT_SECRET
+});
+
+// Authenticate Spotify
+async function authenticateSpotify() {
+  const data = await spotifyApi.clientCredentialsGrant();
+  spotifyApi.setAccessToken(data.body['access_token']);
 }
 
-// Download songs, playlist support
+// Get track names from a playlist
+async function getPlaylistTracks(playlistUrl) {
+  await authenticateSpotify();
+  const playlistId = playlistUrl.split('/').pop().split('?')[0];
+
+  let tracks = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (true) {
+    const response = await spotifyApi.getPlaylistTracks(playlistId, { offset, limit });
+    response.body.items.forEach(item => {
+      tracks.push(`${item.track.artists.map(a => a.name).join(', ')} - ${item.track.name}`);
+    });
+    if (response.body.items.length < limit) break;
+    offset += limit;
+  }
+  return tracks;
+}
+
+// Convert track name to YouTube search URL
+function trackToYouTubeSearch(trackName) {
+  return `ytsearch1:${trackName}`;
+}
+
+// Download song(s) and handle playlist
 async function downloadSong(url, outputPath) {
-  const isPlaylist = url.includes('spotify.com/playlist');
   let tracks = [];
 
-  if (isPlaylist) {
-    // Get track list from playlist using yt-dlp JSON
-    tracks = await new Promise((resolve, reject) => {
-      const ytdlp = spawn('yt-dlp', [
-        spotifyToYouTubeSearch(url),
-        '--flat-playlist',
-        '--dump-json'
-      ]);
-
-      let dataStr = '';
-      ytdlp.stdout.on('data', d => (dataStr += d.toString()));
-      ytdlp.stderr.on('data', d => console.error(d.toString()));
-
-      ytdlp.on('close', code => {
-        if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
-        const list = dataStr.trim().split('\n').map(line => JSON.parse(line));
-        resolve(list);
-      });
-    });
+  if (url.includes('spotify.com/playlist')) {
+    const trackNames = await getPlaylistTracks(url);
+    tracks = trackNames.map(name => trackToYouTubeSearch(name));
+  } else if (url.includes('spotify.com/track')) {
+    const trackNames = await getPlaylistTracks(url.replace('track', 'playlist')); // fallback
+    tracks = [trackToYouTubeSearch(trackNames[0])];
   } else {
-    tracks = [{ url: spotifyToYouTubeSearch(url) }];
+    tracks = [url]; // normal YouTube links still work
   }
 
   for (let i = 0; i < tracks.length; i++) {
-    const track = tracks[i];
-    const trackUrl = track.url;
+    const trackUrl = tracks[i];
+    fs.mkdirSync(outputPath, { recursive: true });
 
     await new Promise((resolve, reject) => {
-      const trackPath = path.join(outputPath);
-      fs.mkdirSync(trackPath, { recursive: true });
-
       const args = [
         trackUrl,
         '-x',
         '--audio-format', 'mp3',
         '--audio-quality', '0',
-        '-o', `${trackPath}/%(title)s.%(ext)s`
+        '-o', `${outputPath}/%(title)s.%(ext)s`
       ];
 
       const ytdlp = spawn('yt-dlp', args);
+
       currentDownload.progress = `Track ${i + 1} of ${tracks.length}`;
 
       ytdlp.stdout.on('data', d => console.log(d.toString()));
@@ -80,11 +94,11 @@ async function downloadSong(url, outputPath) {
   }
 }
 
+// Queue processor
 async function processQueue() {
   if (currentDownload || downloadQueue.length === 0) return;
   currentDownload = downloadQueue.shift();
   currentDownload.status = 'Downloading';
-
   const outputPath = path.join(__dirname, 'downloads', currentDownload.id);
 
   try {
@@ -108,6 +122,7 @@ async function processQueue() {
   }
 }
 
+// Zip folder helper
 function zipFolder(source, out) {
   return new Promise((resolve, reject) => {
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -144,7 +159,7 @@ app.post('/download', (req, res) => {
   res.send({ id });
 });
 
-// Status
+// Status endpoint
 app.get('/status', (req, res) => {
   res.send({
     current: currentDownload,
@@ -156,7 +171,7 @@ app.get('/status', (req, res) => {
   });
 });
 
-// Serve zips
+// Serve ZIPs
 app.use('/zips', express.static(path.join(__dirname, 'zips')));
 
 app.listen(PORT, () => console.log(`Music Hub running: http://localhost:${PORT}`));
