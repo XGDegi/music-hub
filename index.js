@@ -7,53 +7,52 @@ const archiver = require('archiver');
 const app = express();
 const PORT = 3000;
 
-// Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Queues
 let downloadQueue = [];
 let zipQueue = [];
 let currentDownload = null;
 
-// Convert Spotify URL to YouTube search
-async function spotifyToYouTubeSearch(url) {
-  return 'ytsearch1:' + url;
+// Convert Spotify URL to YouTube search URL
+function spotifyToYouTubeSearch(url) {
+  // Extract track/playlist name from URL (simplified)
+  const parts = url.split('/');
+  const id = parts[parts.length - 1].split('?')[0];
+  return `ytsearch1:${id}`; // searches YouTube for top match
 }
 
-// Download songs (supports playlists)
+// Download songs, playlist support
 async function downloadSong(url, outputPath) {
   const isPlaylist = url.includes('spotify.com/playlist');
   let tracks = [];
 
   if (isPlaylist) {
-    // Get list of tracks via yt-dlp JSON
+    // Get track list from playlist using yt-dlp JSON
     tracks = await new Promise((resolve, reject) => {
       const ytdlp = spawn('yt-dlp', [
-        url,
+        spotifyToYouTubeSearch(url),
         '--flat-playlist',
         '--dump-json'
       ]);
 
       let dataStr = '';
-      ytdlp.stdout.on('data', (data) => { dataStr += data.toString(); });
-      ytdlp.stderr.on('data', (data) => console.error(data.toString()));
+      ytdlp.stdout.on('data', d => (dataStr += d.toString()));
+      ytdlp.stderr.on('data', d => console.error(d.toString()));
 
-      ytdlp.on('close', (code) => {
+      ytdlp.on('close', code => {
         if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
         const list = dataStr.trim().split('\n').map(line => JSON.parse(line));
         resolve(list);
       });
     });
-    console.log(`Found ${tracks.length} tracks in playlist`);
   } else {
-    tracks = [{ url }]; // single track
+    tracks = [{ url: spotifyToYouTubeSearch(url) }];
   }
 
-  // Download each track sequentially
   for (let i = 0; i < tracks.length; i++) {
     const track = tracks[i];
-    const trackUrl = isPlaylist ? track.url : track.url;
+    const trackUrl = track.url;
 
     await new Promise((resolve, reject) => {
       const trackPath = path.join(outputPath);
@@ -70,10 +69,10 @@ async function downloadSong(url, outputPath) {
       const ytdlp = spawn('yt-dlp', args);
       currentDownload.progress = `Track ${i + 1} of ${tracks.length}`;
 
-      ytdlp.stdout.on('data', (data) => console.log(data.toString()));
-      ytdlp.stderr.on('data', (data) => console.error(data.toString()));
+      ytdlp.stdout.on('data', d => console.log(d.toString()));
+      ytdlp.stderr.on('data', d => console.error(d.toString()));
 
-      ytdlp.on('close', (code) => {
+      ytdlp.on('close', code => {
         if (code === 0) resolve();
         else reject(new Error(`yt-dlp exited with code ${code}`));
       });
@@ -81,7 +80,6 @@ async function downloadSong(url, outputPath) {
   }
 }
 
-// Process download queue
 async function processQueue() {
   if (currentDownload || downloadQueue.length === 0) return;
   currentDownload = downloadQueue.shift();
@@ -92,7 +90,6 @@ async function processQueue() {
   try {
     await downloadSong(currentDownload.url, outputPath);
 
-    // Zip all songs (single or playlist)
     currentDownload.status = 'Zipping';
     const zipPath = path.join(__dirname, 'zips', `${currentDownload.id}.zip`);
     fs.mkdirSync(path.dirname(zipPath), { recursive: true });
@@ -111,7 +108,6 @@ async function processQueue() {
   }
 }
 
-// Zip helper
 function zipFolder(source, out) {
   return new Promise((resolve, reject) => {
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -122,7 +118,7 @@ function zipFolder(source, out) {
   });
 }
 
-// Auto-delete zips and downloads after 1 hour
+// Auto-delete after 1 hour
 setInterval(() => {
   const now = Date.now();
   zipQueue = zipQueue.filter(item => {
@@ -148,7 +144,7 @@ app.post('/download', (req, res) => {
   res.send({ id });
 });
 
-// Dashboard status
+// Status
 app.get('/status', (req, res) => {
   res.send({
     current: currentDownload,
@@ -163,5 +159,4 @@ app.get('/status', (req, res) => {
 // Serve zips
 app.use('/zips', express.static(path.join(__dirname, 'zips')));
 
-// Start server
 app.listen(PORT, () => console.log(`Music Hub running: http://localhost:${PORT}`));
