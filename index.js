@@ -16,41 +16,69 @@ let downloadQueue = [];
 let zipQueue = [];
 let currentDownload = null;
 
-// Convert Spotify URLs to YouTube search
+// Convert Spotify URL to YouTube search
 async function spotifyToYouTubeSearch(url) {
-  return 'ytsearch1:' + url; // simple automatic conversion
+  return 'ytsearch1:' + url;
 }
 
-// Download using yt-dlp, audio only in MP3
+// Download songs (supports playlists)
 async function downloadSong(url, outputPath) {
-  if (url.includes('spotify.com')) {
-    url = await spotifyToYouTubeSearch(url);
+  const isPlaylist = url.includes('spotify.com/playlist');
+  let tracks = [];
+
+  if (isPlaylist) {
+    // Get list of tracks via yt-dlp JSON
+    tracks = await new Promise((resolve, reject) => {
+      const ytdlp = spawn('yt-dlp', [
+        url,
+        '--flat-playlist',
+        '--dump-json'
+      ]);
+
+      let dataStr = '';
+      ytdlp.stdout.on('data', (data) => { dataStr += data.toString(); });
+      ytdlp.stderr.on('data', (data) => console.error(data.toString()));
+
+      ytdlp.on('close', (code) => {
+        if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
+        const list = dataStr.trim().split('\n').map(line => JSON.parse(line));
+        resolve(list);
+      });
+    });
+    console.log(`Found ${tracks.length} tracks in playlist`);
+  } else {
+    tracks = [{ url }]; // single track
   }
 
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn('yt-dlp', [
-      url,
-      '-x',                  // extract audio
-      '--audio-format', 'mp3', // convert to mp3
-      '--audio-quality', '0',   // best quality
-      '-o', `${outputPath}/%(title)s.%(ext)s`
-    ]);
+  // Download each track sequentially
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
+    const trackUrl = isPlaylist ? track.url : track.url;
 
-    ytdlp.stdout.on('data', (data) => {
-      const str = data.toString();
-      console.log(`yt-dlp: ${str}`);
-      if (currentDownload) currentDownload.progress = str;
-    });
+    await new Promise((resolve, reject) => {
+      const trackPath = path.join(outputPath);
+      fs.mkdirSync(trackPath, { recursive: true });
 
-    ytdlp.stderr.on('data', (data) => {
-      console.error(`yt-dlp error: ${data}`);
-    });
+      const args = [
+        trackUrl,
+        '-x',
+        '--audio-format', 'mp3',
+        '--audio-quality', '0',
+        '-o', `${trackPath}/%(title)s.%(ext)s`
+      ];
 
-    ytdlp.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`yt-dlp exited with code ${code}`));
+      const ytdlp = spawn('yt-dlp', args);
+      currentDownload.progress = `Track ${i + 1} of ${tracks.length}`;
+
+      ytdlp.stdout.on('data', (data) => console.log(data.toString()));
+      ytdlp.stderr.on('data', (data) => console.error(data.toString()));
+
+      ytdlp.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`yt-dlp exited with code ${code}`));
+      });
     });
-  });
+  }
 }
 
 // Process download queue
@@ -60,13 +88,12 @@ async function processQueue() {
   currentDownload.status = 'Downloading';
 
   const outputPath = path.join(__dirname, 'downloads', currentDownload.id);
-  fs.mkdirSync(outputPath, { recursive: true });
 
   try {
     await downloadSong(currentDownload.url, outputPath);
-    currentDownload.status = 'Zipping';
 
-    // Zip the folder
+    // Zip all songs (single or playlist)
+    currentDownload.status = 'Zipping';
     const zipPath = path.join(__dirname, 'zips', `${currentDownload.id}.zip`);
     fs.mkdirSync(path.dirname(zipPath), { recursive: true });
     await zipFolder(outputPath, zipPath);
