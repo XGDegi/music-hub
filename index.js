@@ -4,7 +4,6 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
-const fetch = require('node-fetch'); // optional for Spotify API if you extend
 const app = express();
 const PORT = 3000;
 
@@ -12,21 +11,18 @@ const PORT = 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// In-memory queues
+// Queues
 let downloadQueue = [];
 let zipQueue = [];
 let currentDownload = null;
 
-// Function to convert Spotify URL to a YouTube search query
+// Convert Spotify URLs to YouTube search
 async function spotifyToYouTubeSearch(url) {
-  // Simple fallback: use ytsearch with Spotify URL
-  // For better accuracy, use Spotify API to get track/playlist info
-  return 'ytsearch1:' + url;
+  return 'ytsearch1:' + url; // simple automatic conversion
 }
 
-// Download function using yt-dlp
+// Download using yt-dlp, audio only in MP3
 async function downloadSong(url, outputPath) {
-  // Convert Spotify URLs to YouTube search automatically
   if (url.includes('spotify.com')) {
     url = await spotifyToYouTubeSearch(url);
   }
@@ -34,8 +30,10 @@ async function downloadSong(url, outputPath) {
   return new Promise((resolve, reject) => {
     const ytdlp = spawn('yt-dlp', [
       url,
-      '-o',
-      `${outputPath}/%(title)s.%(ext)s`
+      '-x',                  // extract audio
+      '--audio-format', 'mp3', // convert to mp3
+      '--audio-quality', '0',   // best quality
+      '-o', `${outputPath}/%(title)s.%(ext)s`
     ]);
 
     ytdlp.stdout.on('data', (data) => {
@@ -68,16 +66,13 @@ async function processQueue() {
     await downloadSong(currentDownload.url, outputPath);
     currentDownload.status = 'Zipping';
 
-    // Zip the download
+    // Zip the folder
     const zipPath = path.join(__dirname, 'zips', `${currentDownload.id}.zip`);
     fs.mkdirSync(path.dirname(zipPath), { recursive: true });
-
     await zipFolder(outputPath, zipPath);
 
     currentDownload.status = 'Done';
     currentDownload.zip = `/zips/${currentDownload.id}.zip`;
-
-    // Add to zip queue for auto-delete
     zipQueue.push({ zipPath, downloadPath: outputPath, timestamp: Date.now() });
 
   } catch (err) {
@@ -89,17 +84,12 @@ async function processQueue() {
   }
 }
 
-// Zip folder
+// Zip helper
 function zipFolder(source, out) {
   return new Promise((resolve, reject) => {
     const archive = archiver('zip', { zlib: { level: 9 } });
     const stream = fs.createWriteStream(out);
-
-    archive
-      .directory(source, false)
-      .on('error', err => reject(err))
-      .pipe(stream);
-
+    archive.directory(source, false).on('error', err => reject(err)).pipe(stream);
     stream.on('close', () => resolve());
     archive.finalize();
   });
@@ -116,9 +106,9 @@ setInterval(() => {
     }
     return true;
   });
-}, 60000); // check every 60s
+}, 60000);
 
-// API to add download
+// Add download
 app.post('/download', (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).send({ error: 'No URL provided' });
@@ -131,7 +121,7 @@ app.post('/download', (req, res) => {
   res.send({ id });
 });
 
-// API for dashboard status
+// Dashboard status
 app.get('/status', (req, res) => {
   res.send({
     current: currentDownload,
