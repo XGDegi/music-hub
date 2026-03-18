@@ -1,4 +1,5 @@
 // index.js
+require('dotenv').config();  // Loads Spotify credentials from .env
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
